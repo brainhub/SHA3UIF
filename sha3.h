@@ -21,9 +21,11 @@
  * Aug 2015. Andrey Jivsov. crypto@brainhub.org
  * ---------------------------------------------------------------------- */
 
+/* How much data are after Finalize, SqueezeNext, SqueezeNext, etc */
+#define SHA3_RATE_SHAKE256  136	// Keccak state size in bytes (1600-512 bits)
+
 /* 'Words' here refers to uint64_t */
-#define SHA3_KECCAK_SPONGE_WORDS \
-	(((1600)/8/*bits to byte*/)/sizeof(uint64_t))
+#define SHA3_KECCAK_SPONGE_WORDS (SHA3_STATE_SIZE/sizeof(uint64_t))
 typedef struct sha3_context_ {
     uint64_t saved;             /* the portion of the input message that we
                                  * didn't consume yet */
@@ -41,7 +43,8 @@ typedef struct sha3_context_ {
 
 enum SHA3_FLAGS {
     SHA3_FLAGS_NONE=0,
-    SHA3_FLAGS_KECCAK=1
+    SHA3_FLAGS_KECCAK=1,
+    SHA3_FLAGS_SHAKE256=2
 };
 
 enum SHA3_RETURN {
@@ -62,6 +65,8 @@ enum SHA3_FLAGS sha3_SetFlags(void *priv, enum SHA3_FLAGS);
 void sha3_Update(void *priv, void const *bufIn, size_t len);
 
 void const *sha3_Finalize(void *priv);
+
+void const *sha3_SqueezeNext(void *priv);
 
 /* Single-call hashing */
 sha3_return_t sha3_HashBuffer( 

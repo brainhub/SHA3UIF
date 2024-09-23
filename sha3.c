@@ -30,7 +30,8 @@
  * This flag is used to configure "pure" Keccak, as opposed to NIST SHA3.
  */
 #define SHA3_USE_KECCAK_FLAG 0x80000000
-#define SHA3_CW(x) ((x) & (~SHA3_USE_KECCAK_FLAG))
+#define SHA3_USE_SHAKE256_FLAG  0x40000000
+#define SHA3_CW(x) ((x) & (~(SHA3_USE_KECCAK_FLAG|SHA3_USE_SHAKE256_FLAG)))
 
 
 #if defined(_MSC_VER)
@@ -148,8 +149,18 @@ enum SHA3_FLAGS
 sha3_SetFlags(void *priv, enum SHA3_FLAGS flags)
 {
     sha3_context *ctx = (sha3_context *) priv;
-    flags &= SHA3_FLAGS_KECCAK;
+	if( (flags & SHA3_FLAGS_KECCAK) && (flags & SHA3_FLAGS_SHAKE256) ) {
+		return SHA3_FLAGS_NONE;
+	}
+    flags &= (SHA3_FLAGS_KECCAK | SHA3_FLAGS_SHAKE256);
     ctx->capacityWords |= (flags == SHA3_FLAGS_KECCAK ? SHA3_USE_KECCAK_FLAG : 0);
+    ctx->capacityWords |= (flags == SHA3_FLAGS_SHAKE256 ? SHA3_USE_SHAKE256_FLAG : 0);
+
+	if( (flags & SHA3_FLAGS_SHAKE256) && (SHA3_CW(ctx->capacityWords) != 2 * 256 / (8 * sizeof(uint64_t))) )  {
+		// We only support SHAKE256 now
+		return SHA3_FLAGS_NONE;
+	}
+
     return flags;
 }
 
@@ -266,15 +277,21 @@ sha3_Finalize(void *priv)
         /* Keccak version */
         t = (uint64_t)(((uint64_t) 1) << (ctx->byteIndex * 8));
     }
+    else if( ctx->capacityWords & SHA3_USE_SHAKE256_FLAG ) {
+        /* Shake256 version */
+        t = (uint64_t)(((uint64_t)(0x01f)) << ((ctx->byteIndex) * 8));
+	}
     else {
         /* SHA3 version */
-        t = (uint64_t)(((uint64_t)(0x02 | (1 << 2))) << ((ctx->byteIndex) * 8));
+        t = (uint64_t)(((uint64_t)(0x06)) << ((ctx->byteIndex) * 8));
     }
 
     ctx->u.s[ctx->wordIndex] ^= ctx->saved ^ t;
 
+	// Used in all cases
     ctx->u.s[SHA3_KECCAK_SPONGE_WORDS - SHA3_CW(ctx->capacityWords) - 1] ^=
             SHA3_CONST(0x8000000000000000UL);
+
     keccakf(ctx->u.s);
 
     /* Return first bytes of the ctx->s. This conversion is not needed for
@@ -284,7 +301,7 @@ sha3_Finalize(void *priv)
      * #endif */
     {
         unsigned i;
-        for(i = 0; i < SHA3_KECCAK_SPONGE_WORDS; i++) {
+        for(i = 0; i < SHA3_KECCAK_SPONGE_WORDS - SHA3_CW(ctx->capacityWords); i++) {
             const unsigned t1 = (uint32_t) ctx->u.s[i];
             const unsigned t2 = (uint32_t) ((ctx->u.s[i] >> 16) >> 16);
             ctx->u.sb[i * 8 + 0] = (uint8_t) (t1);
@@ -299,6 +316,42 @@ sha3_Finalize(void *priv)
     }
 
     SHA3_TRACE_BUF("Hash: (first 32 bytes)", ctx->u.sb, 256 / 8);
+
+    return (ctx->u.sb);
+}
+
+/* Only meaningful for SHAKE */
+void const *
+sha3_SqueezeNext(void *priv)
+{
+    sha3_context *ctx = (sha3_context *) priv;
+
+    SHA3_TRACE("called with %d bytes in the buffer", ctx->byteIndex);
+
+    keccakf(ctx->u.s);
+
+    /* Return first bytes of the ctx->s. This conversion is not needed for
+     * little-endian platforms e.g. wrap with #if !defined(__BYTE_ORDER__)
+     * || !defined(__ORDER_LITTLE_ENDIAN__) || __BYTE_ORDER__!=__ORDER_LITTLE_ENDIAN__ 
+     *    ... the conversion below ...
+     * #endif */
+    {
+        unsigned i;
+        for(i = 0; i < SHA3_KECCAK_SPONGE_WORDS - SHA3_CW(ctx->capacityWords); i++) {
+            const unsigned t1 = (uint32_t) ctx->u.s[i];
+            const unsigned t2 = (uint32_t) ((ctx->u.s[i] >> 16) >> 16);
+            ctx->u.sb[i * 8 + 0] = (uint8_t) (t1);
+            ctx->u.sb[i * 8 + 1] = (uint8_t) (t1 >> 8);
+            ctx->u.sb[i * 8 + 2] = (uint8_t) (t1 >> 16);
+            ctx->u.sb[i * 8 + 3] = (uint8_t) (t1 >> 24);
+            ctx->u.sb[i * 8 + 4] = (uint8_t) (t2);
+            ctx->u.sb[i * 8 + 5] = (uint8_t) (t2 >> 8);
+            ctx->u.sb[i * 8 + 6] = (uint8_t) (t2 >> 16);
+            ctx->u.sb[i * 8 + 7] = (uint8_t) (t2 >> 24);
+        }
+    }
+
+    SHA3_TRACE_BUF("Hash: (next 200 bytes)", ctx->u.sb, SHA3_STATE_SIZE);
 
     return (ctx->u.sb);
 }

@@ -1,11 +1,11 @@
 /* -------------------------------------------------------------------------
- * Run SHA-3 (NIST FIPS 202) on the given file. 
+ * Run SHA-3 (NIST FIPS 202) on the given file.
  *
  * Call as
  *
  * sha3sum 256|384|512 file_path
  *
- * See sha3.c for additional details. 
+ * See sha3.c for additional details.
  *
  * Jun 2018. Andrey Jivsov. crypto@brainhub.org
  * ---------------------------------------------------------------------- */
@@ -25,14 +25,14 @@
 #include "sha3.h"
 
 static void help(const char *argv0) {
-    printf("To call: %s 256|384|512 [-k] file_path.\n", argv0);
+    printf("To call: %s 256|384|512 [-k|-s] file_path.\n", argv0);
 }
 
-static void byte_to_hex(uint8_t b, char s[23]) {
-    unsigned i=1;
+static void byte_to_hex(uint8_t b, char s[3]) {
+    int i=1;
     s[0] = s[1] = '0';
     s[2] = '\0';
-    while(b) {
+    while(i>=0) {
         unsigned t = b & 0x0f;
         if( t < 10 ) {
             s[i] = '0' + t;
@@ -55,6 +55,7 @@ int main(int argc, char *argv[])
     void *p;
     unsigned i;
     unsigned use_keccak = 0;
+    unsigned use_shake256 = 0;
 
     if( argc != 3 && argc != 4 ) {
 	    help(argv[0]);
@@ -76,6 +77,10 @@ int main(int argc, char *argv[])
 
     if( argc == 4 && file_path[0] == '-' && file_path[1] == 'k' )  {
         use_keccak = 1;
+        file_path = argv[3];
+    }
+    if( argc == 4 && file_path[0] == '-' && file_path[1] == 's' )  {
+        use_shake256 = 1;
         file_path = argv[3];
     }
 
@@ -118,21 +123,51 @@ int main(int argc, char *argv[])
     if( use_keccak ) {
         enum SHA3_FLAGS flags2 = sha3_SetFlags(&c, SHA3_FLAGS_KECCAK);
         if( flags2 != SHA3_FLAGS_KECCAK )  {
-	    printf("Failed to set Keccak mode");
+			printf("Failed to set Keccak mode");
             return 2;
         }
     }
+
+    if( use_shake256 ) {
+        enum SHA3_FLAGS flags2 = sha3_SetFlags(&c, SHA3_FLAGS_SHAKE256);
+        if( flags2 != SHA3_FLAGS_SHAKE256 )  {
+		    printf("Failed to set Shake256 mode");
+            return 2;
+        }
+    }
+
     sha3_Update(&c, p, st.st_size);
     hash = sha3_Finalize(&c);
 
     munmap(p, st.st_size);
 
-    for(i=0; i<image_size/8; i++) {
-	    char s[3];
-	    byte_to_hex(hash[i],s);
-	    printf("%s", s);
-    }
-    printf("  %s\n", file_path);
+	if( !use_shake256 ) {
+		for(i=0; i<image_size/8; i++) {
+			char s[3];
+			byte_to_hex(hash[i],s);
+			printf("%s", s);
+		}
+		printf("  %s\n", file_path);
+	}
+	else {
+		printf("First %d bytes:\n", SHA3_RATE_SHAKE256);
+		for(i=0; i<SHA3_RATE_SHAKE256; i++) {
+		    char s[3];
+			byte_to_hex(hash[i],s);
+			printf("%s", s);
+		}
+
+		hash = sha3_SqueezeNext(&c);
+		printf("\n\nSecond %d bytes:\n", SHA3_RATE_SHAKE256);
+		for(i=0; i<SHA3_RATE_SHAKE256; i++) {
+		    char s[3];
+			byte_to_hex(hash[i],s);
+			printf("%s", s);
+		}
+		puts("\n");
+		printf("%s\n", file_path);
+	}
+
 
     return 0;
 }
